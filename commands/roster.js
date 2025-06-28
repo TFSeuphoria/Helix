@@ -14,14 +14,19 @@ module.exports = {
   async execute(interaction) {
     const guildId = interaction.guild.id;
     const guildTeams = teamsManager.ensureGuildTeams(guildId);
-
     const teamRole = interaction.options.getRole('team');
 
-    // Verify if the role is a registered team role
-    const teamEntry = Object.entries(guildTeams).find(([teamName, data]) => data.role === teamRole.id);
+    // Get matching team entry
+    const teamEntry = Object.entries(guildTeams).find(
+      ([_, data]) => String(data.role) === teamRole.id
+    );
 
     if (!teamEntry) {
-      return interaction.reply({ content: '❌ That role is not a registered team in this league.', ephemeral: true });
+      const knownRoles = Object.entries(guildTeams).map(([name, data]) => `${name}: ${data.role}`).join('\n');
+      return interaction.reply({
+        content: `❌ That role is not a registered team in this league.\n\n**Debug Info:**\nTeam Role ID: ${teamRole.id}\nKnown Team Roles:\n\`\`\`\n${knownRoles || 'None'}\n\`\`\``,
+        ephemeral: true,
+      });
     }
 
     const [teamName] = teamEntry;
