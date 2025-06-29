@@ -26,11 +26,17 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction) {
-    if (interaction.user.id !== interaction.guild.ownerId) {
-      return interaction.reply({ content: '❌ Only the **server owner** can run this command.', ephemeral: true });
+    // Check if user is server owner OR has Administrator permission
+    const isServerOwner = interaction.user.id === interaction.guild.ownerId;
+    const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+
+    if (!isServerOwner && !isAdmin) {
+      return interaction.reply({
+        content: '❌ Only the **server owner** or someone with **Administrator** permission can run this command.',
+        ephemeral: true
+      });
     }
 
-    // Ensure blank config template exists for this guild
     const guildConfig = configManager.ensureGuildConfig(interaction.guild.id);
 
     // Find matching channels
@@ -47,13 +53,12 @@ module.exports = {
       foundRoles[name] = role ? role.id : null;
     }
 
-    // Update the guild config with found IDs
+    // Save to config
     configManager.updateGuildConfig(interaction.guild.id, {
       channels: foundChannels,
       roles: foundRoles,
     });
 
-    // Build reply embed showing what was matched
     const embed = new EmbedBuilder()
       .setTitle('✅ Auto Setup Complete')
       .setDescription('**Helix Staff 💡:** Your server config has been updated.\n\nHere are the detected channels and roles:')
