@@ -4,6 +4,7 @@ const path = require('path');
 const configPath = path.join(__dirname, 'data', 'config.json');
 
 const blankTemplate = {
+  rosterCap: null, // ✅ NEW: default roster cap
   channels: {
     membership: null,
     suspensions: null,
@@ -50,24 +51,15 @@ function saveConfig(config) {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
-/**
- * Ensures a guild entry exists in config.json.
- * If not, adds a blank template for that guild.
- * Returns the guild config object.
- */
 function ensureGuildConfig(guildId) {
   const config = loadConfig();
   if (!config[guildId]) {
-    config[guildId] = JSON.parse(JSON.stringify(blankTemplate)); // Deep clone
+    config[guildId] = JSON.parse(JSON.stringify(blankTemplate));
     saveConfig(config);
   }
   return config[guildId];
 }
 
-/**
- * Updates the guild's config with new data,
- * merges existing data with updates.
- */
 function updateGuildConfig(guildId, updates) {
   const config = loadConfig();
   if (!config[guildId]) {
@@ -78,12 +70,12 @@ function updateGuildConfig(guildId, updates) {
     ...updates,
     channels: {
       ...config[guildId].channels,
-      ...(updates.channels || {})
+      ...(updates.channels || {}),
     },
     roles: {
       ...config[guildId].roles,
-      ...(updates.roles || {})
-    }
+      ...(updates.roles || {}),
+    },
   };
   saveConfig(config);
   return config[guildId];
