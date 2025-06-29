@@ -12,37 +12,47 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    const guildId = interaction.guild.id;
-    const guildTeams = teamsManager.ensureGuildTeams(guildId);
+    const guild = interaction.guild;
+    const guildId = guild.id;
+    const guildTeams = teamsManager.ensureGuildTeams(guildId); // ✅ Make sure teams exist per server
+
     const teamRole = interaction.options.getRole('team');
 
-    // Get matching team entry
+    // ✅ Check if teamRole.id matches any team in THIS guild's config
     const teamEntry = Object.entries(guildTeams).find(
-      ([_, data]) => String(data.role) === teamRole.id
+      ([, data]) => data.roleId === teamRole.id
     );
 
     if (!teamEntry) {
-      const knownRoles = Object.entries(guildTeams).map(([name, data]) => `${name}: ${data.role}`).join('\n');
       return interaction.reply({
-        content: `❌ That role is not a registered team in this league.\n\n**Debug Info:**\nTeam Role ID: ${teamRole.id}\nKnown Team Roles:\n\`\`\`\n${knownRoles || 'None'}\n\`\`\``,
-        ephemeral: true,
+        content: '❌ That role is not a registered team in this league.',
+        ephemeral: true
       });
     }
 
-    const [teamName] = teamEntry;
+    const [teamName, teamData] = teamEntry;
 
-    // Get members with that role
-    const members = interaction.guild.members.cache.filter(member => member.roles.cache.has(teamRole.id));
+    // ✅ Make sure members are cached — fetch if needed
+    await guild.members.fetch();
+
+    const members = guild.members.cache.filter(member =>
+      member.roles.cache.has(teamRole.id)
+    );
 
     if (members.size === 0) {
-      return interaction.reply({ content: `ℹ️ There are no members currently on **${teamName}**.`, ephemeral: true });
+      return interaction.reply({
+        content: `ℹ️ There are no members currently on **${teamName}**.`,
+        ephemeral: true
+      });
     }
 
-    // Format member list - tag users (limit to first 50 to avoid spam)
-    const memberList = members.map(m => `<@${m.id}>`).slice(0, 50).join('\n');
+    const memberList = members
+      .map(m => `<@${m.id}>`)
+      .slice(0, 50)
+      .join('\n');
 
     const embed = new EmbedBuilder()
-      .setTitle(`📋 Roster for ${teamName}`)
+      .setTitle(`📋 Roster for ${teamData.emoji || ''} ${teamName}`)
       .setDescription(memberList)
       .setColor(0x00b0f4)
       .setFooter({ text: `Total Players: ${members.size}` });
