@@ -24,6 +24,9 @@ const ROLES = [
 ];
 
 const ITEMS_PER_PAGE = 4;
+const channelChunks = chunkArray(CHANNELS, ITEMS_PER_PAGE);
+const roleChunks = chunkArray(ROLES, ITEMS_PER_PAGE);
+const totalPages = channelChunks.length + roleChunks.length + 1; // +1 for roster cap
 
 function chunkArray(arr, size) {
   const chunks = [];
@@ -33,16 +36,12 @@ function chunkArray(arr, size) {
   return chunks;
 }
 
-const channelChunks = chunkArray(CHANNELS, ITEMS_PER_PAGE);
-const roleChunks = chunkArray(ROLES, ITEMS_PER_PAGE);
-const totalPages = channelChunks.length + roleChunks.length;
-
 function buildSelectMenus(guild, items, currentConfig, section) {
   return items.map(name => {
     const isChannel = section === 'channels';
     let options = isChannel
       ? guild.channels.cache
-          .filter(ch => ch.type === 0) // text channels only
+          .filter(ch => ch.type === 0)
           .map(ch => ({
             label: ch.name,
             value: ch.id,
@@ -54,24 +53,46 @@ function buildSelectMenus(guild, items, currentConfig, section) {
           default: currentConfig?.[name] === role.id,
         }));
 
-    // Add "None / Clear" option
     options.unshift({
       label: 'None / Clear',
       value: 'null',
       default: !currentConfig?.[name],
     });
 
-    options = options.slice(0, 25);
-
-    const select = new StringSelectMenuBuilder()
-      .setCustomId(`${section}_${name}`)
-      .setPlaceholder(`Select ${name}`)
-      .addOptions(options)
-      .setMinValues(1)
-      .setMaxValues(1);
-
-    return new ActionRowBuilder().addComponents(select);
+    return new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`${section}_${name}`)
+        .setPlaceholder(`Select ${name}`)
+        .addOptions(options.slice(0, 25))
+        .setMinValues(1)
+        .setMaxValues(1)
+    );
   });
+}
+
+function buildRosterCapSelect(currentCap) {
+  const options = Array.from({ length: 50 }, (_, i) => ({
+    label: `${i + 1}`,
+    value: `${i + 1}`,
+    default: currentCap === i + 1,
+  }));
+
+  options.unshift({
+    label: 'Unlimited / No Cap',
+    value: 'null',
+    default: currentCap === null || currentCap === undefined,
+  });
+
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('cap_rosterCap')
+        .setPlaceholder('Select Roster Cap')
+        .addOptions(options.slice(0, 25))
+        .setMinValues(1)
+        .setMaxValues(1)
+    ),
+  ];
 }
 
 function createEmbed(page, totalPages) {
@@ -81,16 +102,14 @@ function createEmbed(page, totalPages) {
     .setColor(0x0099ff);
 
   if (page < channelChunks.length) {
-    embed.setDescription(
-      'Select the **channels** for the following settings:\n' +
-        channelChunks[page].map(c => `• **${c}**`).join('\n')
-    );
-  } else {
+    embed.setDescription('Select the **channels** for the following settings:\n' +
+      channelChunks[page].map(c => `• **${c}**`).join('\n'));
+  } else if (page < channelChunks.length + roleChunks.length) {
     const rolePageIndex = page - channelChunks.length;
-    embed.setDescription(
-      'Select the **roles** for the following settings:\n' +
-        roleChunks[rolePageIndex].map(r => `• **${r}**`).join('\n')
-    );
+    embed.setDescription('Select the **roles** for the following settings:\n' +
+      roleChunks[rolePageIndex].map(r => `• **${r}**`).join('\n'));
+  } else {
+    embed.setDescription('Set the **Roster Cap** (how many players a team can sign):');
   }
 
   return embed;
@@ -99,7 +118,7 @@ function createEmbed(page, totalPages) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('setup_manual')
-    .setDescription('Manually configure channels and roles using an interactive menu.')
+    .setDescription('Manually configure channels, roles, and roster cap using an interactive menu.')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction) {
@@ -121,7 +140,9 @@ module.exports = {
     const selects =
       currentPage < channelChunks.length
         ? buildSelectMenus(interaction.guild, channelChunks[currentPage], guildConfig.channels, 'channels')
-        : buildSelectMenus(interaction.guild, roleChunks[currentPage - channelChunks.length], guildConfig.roles, 'roles');
+        : currentPage < channelChunks.length + roleChunks.length
+          ? buildSelectMenus(interaction.guild, roleChunks[currentPage - channelChunks.length], guildConfig.roles, 'roles')
+          : buildRosterCapSelect(guildConfig.rosterCap);
 
     const prevButton = new ButtonBuilder()
       .setCustomId('prev')
@@ -164,19 +185,21 @@ module.exports = {
         guildConfig.channels[name] = value;
       } else if (section === 'roles') {
         guildConfig.roles[name] = value;
+      } else if (section === 'cap') {
+        guildConfig.rosterCap = value ? parseInt(value) : null;
       }
 
       configManager.updateGuildConfig(interaction.guild.id, guildConfig);
 
-      await i.reply({ content: `✅ Updated **${name}** ${section === 'channels' ? 'channel' : 'role'}.`, ephemeral: true });
+      await i.reply({
+        content: `✅ Updated **${name}**.`,
+        ephemeral: true
+      });
     });
 
     buttonCollector.on('collect', async i => {
-      if (i.customId === 'next' && currentPage < totalPages - 1) {
-        currentPage++;
-      } else if (i.customId === 'prev' && currentPage > 0) {
-        currentPage--;
-      }
+      if (i.customId === 'next' && currentPage < totalPages - 1) currentPage++;
+      if (i.customId === 'prev' && currentPage > 0) currentPage--;
 
       prevButton.setDisabled(currentPage === 0);
       nextButton.setDisabled(currentPage === totalPages - 1);
@@ -185,7 +208,9 @@ module.exports = {
       const selects =
         currentPage < channelChunks.length
           ? buildSelectMenus(interaction.guild, channelChunks[currentPage], guildConfig.channels, 'channels')
-          : buildSelectMenus(interaction.guild, roleChunks[currentPage - channelChunks.length], guildConfig.roles, 'roles');
+          : currentPage < channelChunks.length + roleChunks.length
+            ? buildSelectMenus(interaction.guild, roleChunks[currentPage - channelChunks.length], guildConfig.roles, 'roles')
+            : buildRosterCapSelect(guildConfig.rosterCap);
 
       await i.update({
         embeds: [embed],
@@ -200,7 +225,7 @@ module.exports = {
           components: [],
         });
       } catch {
-        // ignore errors
+        // Interaction might already be deleted
       }
     });
   },
