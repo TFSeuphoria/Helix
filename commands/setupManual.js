@@ -61,7 +61,6 @@ function buildSelectMenus(guild, items, currentConfig, section) {
       default: !currentConfig?.[name],
     });
 
-    // Enforce Discord limit (max 25 options)
     options = options.slice(0, 25);
 
     const select = new StringSelectMenuBuilder()
@@ -104,8 +103,14 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction) {
-    if (interaction.user.id !== interaction.guild.ownerId) {
-      return interaction.reply({ content: '❌ Only the **server owner** can run this command.', ephemeral: true });
+    const isOwner = interaction.user.id === interaction.guild.ownerId;
+    const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+
+    if (!isOwner && !isAdmin) {
+      return interaction.reply({
+        content: '❌ Only the **server owner** or someone with **Administrator** permission can run this command.',
+        ephemeral: true
+      });
     }
 
     const guildConfig = configManager.ensureGuildConfig(interaction.guild.id);
@@ -133,7 +138,7 @@ module.exports = {
     const message = await interaction.reply({
       embeds: [embed],
       components: [...selects, new ActionRowBuilder().addComponents(prevButton, nextButton)],
-      flags: 1 << 6, // ephemeral flag
+      flags: 1 << 6,
       fetchReply: true,
     });
 
@@ -195,7 +200,7 @@ module.exports = {
           components: [],
         });
       } catch {
-        // ignore errors if interaction is already deleted
+        // ignore errors
       }
     });
   },
