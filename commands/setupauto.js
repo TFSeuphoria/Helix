@@ -1,73 +1,90 @@
-const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  EmbedBuilder,
+} = require('discord.js');
 const configManager = require('../config.js');
 
-const REQUIRED_CHANNELS = [
+const CHANNELS_TO_SETUP = [
   'membership', 'suspensions', 'gametimes', 'rulebook', 'applications',
-  'tickets', 'team owners', 'standings', 'results', 'streams', 'pickups',
-  'transactions', 'free agency', 'logs'
+  'tickets', 'team owners', 'standings', 'results', 'streams',
+  'pickups', 'transactions', 'free agency', 'logs',
 ];
 
-const REQUIRED_ROLES = [
-  'verified', 'unverified', 'commissioner', 'referee', 'streamer', 'suspended',
-  'franchise owner', 'general manager', 'head coach', 'assistant coach',
-  'stat manager', 'pickups hoster', 'stream ping', 'pickups ping'
+const ROLES_TO_SETUP = [
+  'verified', 'unverified', 'commissioner', 'referee', 'streamer',
+  'suspended', 'franchise owner', 'general manager', 'head coach',
+  'assistant coach', 'stat manager', 'pickups hoster',
+  'stream ping', 'pickups ping', 'blacklisted', 'candidate',
 ];
 
-// Simple fuzzy finder: finds the first channel/role that includes the name substring (case-insensitive)
-function fuzzyFind(collection, targetName) {
-  const lowerTarget = targetName.toLowerCase();
-  return collection.find(c => c.name.toLowerCase().includes(lowerTarget)) || null;
+function findBestMatch(name, collection) {
+  name = name.toLowerCase();
+  return collection.find(
+    item => item.name.toLowerCase().includes(name)
+  );
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('setup_auto')
-    .setDescription('Automatically configures channels and roles based on fuzzy name matching.')
+    .setDescription('Automatically configure channels and roles based on name similarity.')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction) {
-    // Check if user is server owner OR has Administrator permission
-    const isServerOwner = interaction.user.id === interaction.guild.ownerId;
-    const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
-
-    if (!isServerOwner && !isAdmin) {
-      return interaction.reply({
-        content: '❌ Only the **server owner** or someone with **Administrator** permission can run this command.',
-        ephemeral: true
-      });
+    const guild = interaction.guild;
+    if (!guild) {
+      return interaction.reply({ content: '❌ This command can only be run in a server.', ephemeral: true });
     }
 
-    const guildConfig = configManager.ensureGuildConfig(interaction.guild.id);
+    // Get current config or blank template for this guild
+    const guildConfig = configManager.ensureGuildConfig(guild.id);
 
-    // Find matching channels
-    const foundChannels = {};
-    for (const name of REQUIRED_CHANNELS) {
-      const channel = fuzzyFind(interaction.guild.channels.cache, name);
-      foundChannels[name] = channel ? channel.id : null;
+    const newConfig = {
+      channels: { ...guildConfig.channels },
+      roles: { ...guildConfig.roles },
+    };
+
+    const matchedChannels = [];
+    for (const key of CHANNELS_TO_SETUP) {
+      const match = findBestMatch(key, guild.channels.cache);
+      if (match) {
+        newConfig.channels[key] = match.id;
+        matchedChannels.push(`✅ Channel **${key}** -> #${match.name}`);
+      } else {
+        newConfig.channels[key] = null;
+      }
     }
 
-    // Find matching roles
-    const foundRoles = {};
-    for (const name of REQUIRED_ROLES) {
-      const role = fuzzyFind(interaction.guild.roles.cache, name);
-      foundRoles[name] = role ? role.id : null;
+    const matchedRoles = [];
+    for (const key of ROLES_TO_SETUP) {
+      const match = findBestMatch(key, guild.roles.cache);
+      if (match) {
+        newConfig.roles[key] = match.id;
+        matchedRoles.push(`✅ Role **${key}** -> @${match.name}`);
+      } else {
+        newConfig.roles[key] = null;
+      }
     }
 
-    // Save to config
-    configManager.updateGuildConfig(interaction.guild.id, {
-      channels: foundChannels,
-      roles: foundRoles,
-    });
+    // Save updated config
+    configManager.updateGuildConfig(guild.id, newConfig);
 
+    // Build summary embed
     const embed = new EmbedBuilder()
-      .setTitle('✅ Auto Setup Complete')
-      .setDescription('**Helix Staff 💡:** Your server config has been updated.\n\nHere are the detected channels and roles:')
+      .setTitle('🛠️ Auto Setup Complete')
       .setColor(0x00ff99)
-      .addFields(
-        { name: '📚 Channels', value: REQUIRED_CHANNELS.map(n => `• ${n}: ${foundChannels[n] ? `<#${foundChannels[n]}>` : '`Not Found`'}`).join('\n'), inline: false },
-        { name: '🎭 Roles', value: REQUIRED_ROLES.map(n => `• ${n}: ${foundRoles[n] ? `<@&${foundRoles[n]}>` : '`Not Found`'}`).join('\n'), inline: false }
-      );
+      .setDescription(
+        [
+          '**Channels Configured:**',
+          matchedChannels.length ? matchedChannels.join('\n') : '_No channels matched_',
+          '',
+          '**Roles Configured:**',
+          matchedRoles.length ? matchedRoles.join('\n') : '_No roles matched_',
+        ].join('\n')
+      )
+      .setTimestamp();
 
     return interaction.reply({ embeds: [embed], ephemeral: true });
-  }
+  },
 };
