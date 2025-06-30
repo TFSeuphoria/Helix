@@ -3,7 +3,7 @@ const {
   PermissionFlagsBits,
   EmbedBuilder,
 } = require('discord.js');
-const configManager = require('../config.js');
+const configManager = require('../data/config.js');
 
 const CHANNELS_TO_SETUP = [
   'membership', 'suspensions', 'gametimes', 'rulebook', 'applications',
