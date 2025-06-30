@@ -1,232 +1,149 @@
 const {
   SlashCommandBuilder,
-  EmbedBuilder,
   ActionRowBuilder,
   StringSelectMenuBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ComponentType,
+  ChannelType,
   PermissionFlagsBits,
 } = require('discord.js');
-const configManager = require('../config.js');
 
-const CHANNELS = [
-  'membership', 'suspensions', 'gametimes', 'rulebook', 'applications',
-  'tickets', 'team owners', 'standings', 'results', 'streams',
-  'pickups', 'transactions', 'free agency', 'logs',
-];
+const fs = require('fs');
+const path = require('path');
+const configPath = path.join(__dirname, '../config.json');
 
-const ROLES = [
-  'verified', 'unverified', 'commissioner', 'referee', 'streamer',
-  'suspended', 'franchise owner', 'general manager', 'head coach',
-  'assistant coach', 'stat manager', 'pickups hoster',
-  'stream ping', 'pickups ping',
-];
-
-const ITEMS_PER_PAGE = 4;
-const channelChunks = chunkArray(CHANNELS, ITEMS_PER_PAGE);
-const roleChunks = chunkArray(ROLES, ITEMS_PER_PAGE);
-const totalPages = channelChunks.length + roleChunks.length + 1; // +1 for roster cap
-
-function chunkArray(arr, size) {
-  const chunks = [];
-  for (let i = 0; i < arr.length; i += size) {
-    chunks.push(arr.slice(i, i + size));
-  }
-  return chunks;
+function getConfig() {
+  return JSON.parse(fs.readFileSync(configPath, 'utf8'));
 }
 
-function buildSelectMenus(guild, items, currentConfig, section) {
-  return items.map(name => {
-    const isChannel = section === 'channels';
-    let options = isChannel
-      ? guild.channels.cache
-          .filter(ch => ch.type === 0)
-          .map(ch => ({
-            label: ch.name,
-            value: ch.id,
-            default: currentConfig?.[name] === ch.id,
-          }))
-      : guild.roles.cache.map(role => ({
-          label: role.name,
-          value: role.id,
-          default: currentConfig?.[name] === role.id,
-        }));
-
-    options.unshift({
-      label: 'None / Clear',
-      value: 'null',
-      default: !currentConfig?.[name],
-    });
-
-    return new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId(`${section}_${name}`)
-        .setPlaceholder(`Select ${name}`)
-        .addOptions(options.slice(0, 25))
-        .setMinValues(1)
-        .setMaxValues(1)
-    );
-  });
+function saveConfig(config) {
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
-function buildRosterCapSelect(currentCap) {
-  const options = Array.from({ length: 50 }, (_, i) => ({
-    label: `${i + 1}`,
-    value: `${i + 1}`,
-    default: currentCap === i + 1,
-  }));
-
-  options.unshift({
-    label: 'Unlimited / No Cap',
-    value: 'null',
-    default: currentCap === null || currentCap === undefined,
-  });
-
-  return [
-    new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('cap_rosterCap')
-        .setPlaceholder('Select Roster Cap')
-        .addOptions(options.slice(0, 25))
-        .setMinValues(1)
-        .setMaxValues(1)
-    ),
-  ];
-}
-
-function createEmbed(page, totalPages) {
-  const embed = new EmbedBuilder()
-    .setTitle('⚙️ Manual Setup - Configure Your Server')
-    .setFooter({ text: `Helix Staff 💡 - Page ${page + 1} / ${totalPages}` })
-    .setColor(0x0099ff);
-
-  if (page < channelChunks.length) {
-    embed.setDescription('Select the **channels** for the following settings:\n' +
-      channelChunks[page].map(c => `• **${c}**`).join('\n'));
-  } else if (page < channelChunks.length + roleChunks.length) {
-    const rolePageIndex = page - channelChunks.length;
-    embed.setDescription('Select the **roles** for the following settings:\n' +
-      roleChunks[rolePageIndex].map(r => `• **${r}**`).join('\n'));
-  } else {
-    embed.setDescription('Set the **Roster Cap** (how many players a team can sign):');
-  }
-
-  return embed;
-}
+const configKeys = {
+  roles: [
+    'verified', 'unverified', 'commissioner', 'referee',
+    'streamer', 'suspended', 'franchise owner', 'general manager',
+    'head coach', 'assistant coach', 'stat manager', 'pickups hoster',
+    'stream ping', 'pickups ping', 'blacklisted', 'candidate'
+  ],
+  channels: [
+    'membership', 'suspensions', 'gametimes', 'rulebook', 'applications',
+    'tickets', 'team owners', 'standings', 'results', 'streams', 'pickups',
+    'transactions', 'free agency', 'logs'
+  ],
+  settings: ['rosterCap']
+};
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('setup_manual')
-    .setDescription('Manually configure channels, roles, and roster cap using an interactive menu.')
+    .setDescription('Manually configure the server bot.')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction) {
-    const isOwner = interaction.user.id === interaction.guild.ownerId;
-    const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+    const guild = interaction.guild;
+    const config = getConfig();
+    if (!config[guild.id]) config[guild.id] = { roles: {}, channels: {}, settings: {} };
 
-    if (!isOwner && !isAdmin) {
-      return interaction.reply({
-        content: '❌ Only the **server owner** or someone with **Administrator** permission can run this command.',
-        ephemeral: true
+    let page = 0;
+    const allItems = [...configKeys.roles.map(r => ({ type: 'role', name: r })), ...configKeys.channels.map(c => ({ type: 'channel', name: c })), ...configKeys.settings.map(s => ({ type: 'setting', name: s }))];
+    const chunks = [];
+    for (let i = 0; i < allItems.length; i += 4) chunks.push(allItems.slice(i, i + 4));
+
+    const buildSelectRows = (pageIndex) => {
+      const items = chunks[pageIndex];
+      const rows = items.map(item => {
+        const menu = new StringSelectMenuBuilder()
+          .setCustomId(`select_${item.type}_${item.name}`)
+          .setPlaceholder(`Set ${item.name}`)
+          .setMinValues(1)
+          .setMaxValues(1);
+
+        if (item.type === 'role') {
+          menu.addOptions(
+            guild.roles.cache
+              .filter(role => role.name !== '@everyone')
+              .map(role => ({
+                label: role.name,
+                value: role.id
+              }))
+              .slice(0, 25)
+          );
+        } else if (item.type === 'channel') {
+          menu.addOptions(
+            guild.channels.cache
+              .filter(ch => ch.type === ChannelType.GuildText)
+              .map(ch => ({
+                label: ch.name,
+                value: ch.id
+              }))
+              .slice(0, 25)
+          );
+        } else if (item.type === 'setting') {
+          menu.addOptions([
+            { label: 'Enabled', value: 'true' },
+            { label: 'Disabled', value: 'false' }
+          ]);
+        }
+
+        return new ActionRowBuilder().addComponents(menu);
       });
-    }
 
-    const guildConfig = configManager.ensureGuildConfig(interaction.guild.id);
-    let currentPage = 0;
+      // Navigation Buttons
+      const navRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('previous_page')
+          .setLabel('Previous')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(pageIndex === 0),
+        new ButtonBuilder()
+          .setCustomId('next_page')
+          .setLabel('Next')
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(pageIndex === chunks.length - 1)
+      );
 
-    const embed = createEmbed(currentPage, totalPages);
-
-    const selects =
-      currentPage < channelChunks.length
-        ? buildSelectMenus(interaction.guild, channelChunks[currentPage], guildConfig.channels, 'channels')
-        : currentPage < channelChunks.length + roleChunks.length
-          ? buildSelectMenus(interaction.guild, roleChunks[currentPage - channelChunks.length], guildConfig.roles, 'roles')
-          : buildRosterCapSelect(guildConfig.rosterCap);
-
-    const prevButton = new ButtonBuilder()
-      .setCustomId('prev')
-      .setLabel('Previous')
-      .setStyle(ButtonStyle.Primary)
-      .setDisabled(true);
-
-    const nextButton = new ButtonBuilder()
-      .setCustomId('next')
-      .setLabel('Next')
-      .setStyle(ButtonStyle.Primary)
-      .setDisabled(totalPages <= 1);
+      return [...rows, navRow];
+    };
 
     const message = await interaction.reply({
-      embeds: [embed],
-      components: [...selects, new ActionRowBuilder().addComponents(prevButton, nextButton)],
-      flags: 1 << 6,
-      fetchReply: true,
+      content: '📘 Manual Setup: Select the roles, channels, and settings below.',
+      components: buildSelectRows(page),
+      ephemeral: true,
+      fetchReply: true
     });
 
-    const filter = i => i.user.id === interaction.user.id;
-
-    const collector = message.createMessageComponentCollector({
-      componentType: ComponentType.SelectMenu,
-      filter,
-      time: 10 * 60 * 1000,
-    });
-
-    const buttonCollector = message.createMessageComponentCollector({
-      componentType: ComponentType.Button,
-      filter,
-      time: 10 * 60 * 1000,
-    });
+    const collector = message.createMessageComponentCollector({ time: 10 * 60 * 1000 });
 
     collector.on('collect', async i => {
-      const [section, name] = i.customId.split('_');
-      const value = i.values[0] === 'null' ? null : i.values[0];
+      if (i.user.id !== interaction.user.id) return i.reply({ content: 'You can’t interact with this menu.', ephemeral: true });
 
-      if (section === 'channels') {
-        guildConfig.channels[name] = value;
-      } else if (section === 'roles') {
-        guildConfig.roles[name] = value;
-      } else if (section === 'cap') {
-        guildConfig.rosterCap = value ? parseInt(value) : null;
+      const id = i.customId;
+
+      if (id === 'previous_page') {
+        page = Math.max(0, page - 1);
+        return i.update({ components: buildSelectRows(page) });
       }
 
-      configManager.updateGuildConfig(interaction.guild.id, guildConfig);
-
-      await i.reply({
-        content: `✅ Updated **${name}**.`,
-        ephemeral: true
-      });
-    });
-
-    buttonCollector.on('collect', async i => {
-      if (i.customId === 'next' && currentPage < totalPages - 1) currentPage++;
-      if (i.customId === 'prev' && currentPage > 0) currentPage--;
-
-      prevButton.setDisabled(currentPage === 0);
-      nextButton.setDisabled(currentPage === totalPages - 1);
-
-      const embed = createEmbed(currentPage, totalPages);
-      const selects =
-        currentPage < channelChunks.length
-          ? buildSelectMenus(interaction.guild, channelChunks[currentPage], guildConfig.channels, 'channels')
-          : currentPage < channelChunks.length + roleChunks.length
-            ? buildSelectMenus(interaction.guild, roleChunks[currentPage - channelChunks.length], guildConfig.roles, 'roles')
-            : buildRosterCapSelect(guildConfig.rosterCap);
-
-      await i.update({
-        embeds: [embed],
-        components: [...selects, new ActionRowBuilder().addComponents(prevButton, nextButton)],
-      });
-    });
-
-    collector.on('end', async () => {
-      try {
-        await interaction.editReply({
-          content: '⏰ Setup timed out. Please run the command again to continue.',
-          components: [],
-        });
-      } catch {
-        // Interaction might already be deleted
+      if (id === 'next_page') {
+        page = Math.min(chunks.length - 1, page + 1);
+        return i.update({ components: buildSelectRows(page) });
       }
+
+      const [_, type, key] = id.split('_');
+      const selected = i.values[0];
+
+      if (type === 'role') config[guild.id].roles[key] = selected;
+      else if (type === 'channel') config[guild.id].channels[key] = selected;
+      else if (type === 'setting') config[guild.id].settings[key] = selected === 'true';
+
+      saveConfig(config);
+      await i.reply({ content: `✅ Set ${key} to <#${selected}>`, ephemeral: true });
     });
-  },
+
+    collector.on('end', () => {
+      message.edit({ content: 'Setup session ended.', components: [] }).catch(() => {});
+    });
+  }
 };
