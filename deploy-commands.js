@@ -11,7 +11,11 @@ const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('
 for (const file of commandFiles) {
   const command = require(path.join(commandsPath, file));
   if ('data' in command && 'execute' in command) {
-    commands.push(command.data.toJSON());
+    if (command.data && typeof command.data.toJSON === 'function') {
+      commands.push(command.data.toJSON());
+    } else {
+      commands.push(command.data);
+    }
   }
 }
 
